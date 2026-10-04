@@ -1,0 +1,7 @@
+MomentSnap_PoC/
+├── config.py           # все настройки в одном месте
+├── audio_utils.py      # FFmpeg + анализ громкости
+├── transcriber.py      # Whisper
+├── classifier.py       # Ollama / Gemini
+├── pipeline.py         # оркестрация шагов
+└── main.py             # точка входа

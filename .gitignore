@@ -1,0 +1,52 @@
+# ---------- Виртуальные окружения ----------
+.venv/
+.venv1/
+venv/
+env/
+
+# ---------- Python ----------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+build/
+dist/
+*.egg-info/
+
+# ---------- PyCharm / VSCode ----------
+.idea/
+.vscode/
+
+# ---------- Кэши инструментов ----------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------- Медиа (личные файлы) ----------
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.wav
+*.mp3
+
+# ---------- Результаты работы ----------
+clips/
+audio/
+results.json
+full_audio.wav
+
+# ---------- Кэш моделей ----------
+.cache/
+
+# ---------- Секреты ----------
+.env
+*.env
+hf_token.txt
+
+# ---------- Логи ----------
+*.log
+
+# ---------- ОС ----------
+.DS_Store
+Thumbs.db
