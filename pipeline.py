@@ -4,15 +4,15 @@
 Собирает всё вместе:
     1. Извлекает аудио из видео.
     2. Ищет всплески громкости (имитация значка).
-    3. Режет 30-секундные клипы вокруг пиков.
-    4. Транскрибирует каждый клип через Whisper.
-    5. Сортирует каждый клип через LLM.
-    6. Сохраняет результаты в results.json.
+    3. Режет 30-секундные клипы вокруг пиков в папку с датой.
+    4. Удаляет временные файлы.
+    5. Сохраняет отчёт в results.json.
 
 Сам ничего не считает — только вызывает модули.
 """
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 
 import config
@@ -22,18 +22,46 @@ from audio_utils import (
     cut_clip,
     get_video_duration,
 )
-from classifier import classify
-from transcriber import Transcriber
 
 
-def _prepare_dirs() -> None:
+def _get_video_date(video_path: Path) -> str:
     """
-    Создаёт все выходные папки, если их нет.
-    mkdir(parents=True, exist_ok=True) — создаст всю цепочку
-    и не упадёт, если папка уже есть.
+    Дата съёмки видео в формате YYYY-MM-DD.
+    Берём из времени последнего изменения файла (mtime) —
+    это когда видео было записано и скинуто.
     """
-    for d in (config.OUTPUT_DIR, config.CLIPS_DIR, config.AUDIO_DIR):
-        d.mkdir(parents=True, exist_ok=True)
+    mtime = video_path.stat().st_mtime
+    return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
+
+
+def _prepare_dirs(video_path: Path) -> Path:
+    """
+    Создаёт все выходные папки.
+    Возвращает путь к папке клипов для этого видео:
+    clips/YYYY-MM-DD/
+    """
+    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    date_str = _get_video_date(video_path)
+    clips_dir = config.OUTPUT_DIR / "clips" / date_str
+    clips_dir.mkdir(parents=True, exist_ok=True)
+
+    return clips_dir
+
+
+def _cleanup_temp() -> None:
+    """
+    Удаляет временный full_audio.wav после работы.
+    Клипы и results.json НЕ трогает.
+    """
+    if not config.CLEANUP_TEMP_AFTER_RUN:
+        return
+    if config.FULL_WAV.exists():
+        try:
+            config.FULL_WAV.unlink()
+            print(f"  Удалён временный файл: {config.FULL_WAV.name}")
+        except Exception as e:
+            print(f"  ⚠ Не удалось удалить {config.FULL_WAV.name}: {e}")
 
 
 def _compute_clip_bounds(center: float, video_duration: float) -> tuple[float, float]:
@@ -62,57 +90,29 @@ def _process_clip(
     total: int,
     center: float,
     video_duration: float,
-    transcriber: Transcriber,
+    clips_dir: Path,
 ) -> dict:
     """
-    Обрабатывает один клип: режет, транскрибирует, классифицирует.
+    Обрабатывает один клип: режет из исходного видео в clips_dir.
 
     Возвращает dict с результатом для записи в results.json.
     """
     start, end = _compute_clip_bounds(center, video_duration)
 
     clip_name = f"clip_{idx:02d}_center_{center:.1f}s.mp4"
-    clip_path = config.CLIPS_DIR / clip_name
-    clip_wav = config.AUDIO_DIR / f"clip_{idx:02d}.wav"
+    clip_path = clips_dir / clip_name
 
     print(f"\n[{idx}/{total}] Клип вокруг {center:.1f} сек")
     print(f"  Режу {start:.1f}–{end:.1f} сек -> {clip_name}")
 
-    # Шаг 1: вырезать клип из исходного видео
+    # Вырезать клип из исходного видео
     cut_clip(config.VIDEO_PATH, start, end, clip_path)
-
-    # Шаг 2: вытащить из клипа аудио (Whisper ест только WAV)
-    extract_audio(clip_path, clip_wav)
-
-    # Шаг 3: транскрибировать
-    print("  Транскрибирую...")
-    t0 = time.time()
-    transcript = transcriber.transcribe(clip_wav)
-    t_transcribe = time.time() - t0
-
-    preview = transcript[:200] + ("..." if len(transcript) > 200 else "")
-    print(f"  Текст ({t_transcribe:.1f}с): {preview or '<пусто>'}")
-
-    # Шаг 4: классифицировать через LLM
-    print("  Сортирую через ИИ...")
-    t0 = time.time()
-    verdict = classify(transcript)
-    t_classify = time.time() - t0
-
-    keep_mark = "✅ keep" if verdict.get("keep") else "❌ delete"
-    print(f"  Вердикт ({t_classify:.1f}с): {keep_mark} — {verdict.get('reason', '')}")
 
     return {
         "clip": clip_name,
         "start": round(start, 2),
         "end": round(end, 2),
         "center": round(center, 2),
-        "transcript": transcript,
-        "verdict": verdict,
-        "timing": {
-            "transcribe_sec": round(t_transcribe, 2),
-            "classify_sec": round(t_classify, 2),
-        },
     }
 
 
@@ -128,14 +128,17 @@ def run() -> None:
     print("MomentSnap PoC — локальный тест")
     print("=" * 60)
 
-    _prepare_dirs()
+    # Подготовка папок + определение даты
+    clips_dir = _prepare_dirs(config.VIDEO_PATH)
+    print(f"\nДата видео: {_get_video_date(config.VIDEO_PATH)}")
+    print(f"Клипы будут в: {clips_dir}")
 
     # ---------- Шаг 1: извлечь аудио из полного видео ----------
-    print("\n[1/4] Извлекаю аудио из видео...")
+    print("\n[1/3] Извлекаю аудио из видео...")
     extract_audio(config.VIDEO_PATH, config.FULL_WAV)
 
     # ---------- Шаг 2: найти пики громкости ----------
-    print("\n[2/4] Ищу всплески громкости...")
+    print("\n[2/3] Ищу всплески громкости...")
     peaks = find_peaks(config.FULL_WAV)
     video_duration = get_video_duration(config.FULL_WAV)
 
@@ -148,14 +151,11 @@ def run() -> None:
     if not peaks:
         print("\n⚠ Пиков не найдено. Попробуй понизить PEAK_PERCENTILE "
               "или MIN_RMS_THRESHOLD в config.py.")
+        _cleanup_temp()
         return
 
-    # ---------- Шаг 3: загрузить Whisper ----------
-    print("\n[3/4] Загружаю Whisper...")
-    transcriber = Transcriber()
-
-    # ---------- Шаг 4: обработать каждый клип ----------
-    print(f"\n[4/4] Обрабатываю {len(peaks)} клипов...")
+    # ---------- Шаг 3: обработать каждый клип ----------
+    print(f"\n[3/3] Режу {len(peaks)} клипов...")
 
     results = []
     for idx, center in enumerate(peaks, 1):
@@ -165,7 +165,7 @@ def run() -> None:
                 total=len(peaks),
                 center=center,
                 video_duration=video_duration,
-                transcriber=transcriber,
+                clips_dir=clips_dir,
             )
             results.append(result)
         except Exception as e:
@@ -177,10 +177,11 @@ def run() -> None:
                 "error": str(e),
             })
 
-    # ---------- Итог ----------
-    keep_count = sum(1 for r in results if r.get("verdict", {}).get("keep"))
-    total_count = len(results)
+    # ---------- Очистка временных ----------
+    print("\nОчистка временных файлов...")
+    _cleanup_temp()
 
+    # ---------- Итог ----------
     with open(config.RESULTS_JSON, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
 
@@ -189,14 +190,12 @@ def run() -> None:
     print("\n" + "=" * 60)
     print("ГОТОВО")
     print("=" * 60)
-    print(f"  Всего клипов:  {total_count}")
-    print(f"  В архив (keep): {keep_count}")
-    print(f"  В мусор:       {total_count - keep_count}")
+    print(f"  Всего клипов:  {len(results)}")
     print(f"  Время:         {t_total:.1f} сек")
-    print(f"  Результаты:    {config.RESULTS_JSON}")
+    print(f"  Клипы:         {clips_dir}")
+    print(f"  Отчёт:         {config.RESULTS_JSON}")
     print("=" * 60)
 
 
 if __name__ == "__main__":
-    # Позволяет запустить pipeline.py напрямую, без main.py
     run()
