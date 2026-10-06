@@ -3,7 +3,7 @@
 .venv1/
 venv/
 env/
-
+.venv_old
 # ---------- Python ----------
 __pycache__/
 *.pyc
@@ -50,3 +50,8 @@ hf_token.txt
 # ---------- ОС ----------
 .DS_Store
 Thumbs.db
+
+_archive
+
+docs
+results.json

@@ -5,8 +5,8 @@
 from pathlib import Path
 
 # ---------- Пути ----------
-VIDEO_PATH = Path(r"C:\Users\USER\Desktop\MomentSnap\20260930_191736.mp4")
-OUTPUT_DIR = Path(r"C:\MomentSnap_PoC")
+VIDEO_PATH = Path(r"C:\MomentSnap_Data\videos\20260930_191736.mp4")
+OUTPUT_DIR = Path(r"C:\MomentSnap_Data\output")
 CLIPS_DIR = OUTPUT_DIR / "clips"
 AUDIO_DIR = OUTPUT_DIR / "audio"
 FULL_WAV = OUTPUT_DIR / "full_audio.wav"
